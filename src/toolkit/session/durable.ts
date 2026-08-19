@@ -51,6 +51,51 @@ interface Reminder {
   text: string;
 }
 
+interface GameWinner {
+  user_id: number;
+  username: string;
+}
+
+interface StoredRound {
+  secret_number: number;
+  started_by: number;
+  active: boolean;
+  start_time: number;
+  end_time?: number;
+  winner?: GameWinner;
+}
+
+interface StoredLeaderboardEntry extends GameWinner {
+  win_count: number;
+  last_win_time: number;
+}
+
+interface StoredGame {
+  active?: StoredRound;
+  last?: StoredRound;
+  rounds: StoredRound[];
+  guesses: Array<{ user_id: number; username: string; guess_value: number; timestamp: number }>;
+  leaderboard: Record<string, StoredLeaderboardEntry>;
+}
+
+let clock: () => number = () => Date.now();
+
+/** Test seam for clock-driven durable-object behavior. */
+export function setClockForTests(value: (() => number) | undefined): void {
+  clock = value ?? (() => Date.now());
+}
+
+function randomSecret(): number {
+  const limit = Math.floor(0x1_0000_0000 / 100) * 100;
+  let value = 0;
+  do {
+    const bytes = new Uint32Array(1);
+    crypto.getRandomValues(bytes);
+    value = bytes[0];
+  } while (value >= limit);
+  return (value % 100) + 1;
+}
+
 /**
  * createDurableSessionStorage — a grammY StorageAdapter that routes each session
  * key to its own ChatDO instance. Pass to buildBot({ storage }) in the Worker.
@@ -154,13 +199,97 @@ export class ChatDO {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/game/start" && request.method === "POST") {
+      const input = (await request.json()) as { startedBy: number; force: boolean };
+      const game = (await this.state.storage.get<StoredGame>("game")) ?? {
+        rounds: [],
+        guesses: [],
+        leaderboard: {},
+      };
+      if (game.active?.active && !input.force) {
+        return Response.json({ kind: "already-active" });
+      }
+      if (game.active?.active) {
+        game.active.active = false;
+        game.active.end_time = clock();
+        game.rounds.push(game.active);
+      }
+      const round: StoredRound = {
+        secret_number: randomSecret(),
+        started_by: input.startedBy,
+        active: true,
+        start_time: clock(),
+      };
+      game.active = round;
+      await this.state.storage.put("game", game);
+      return Response.json({ kind: "started", round, restarted: input.force });
+    }
+
+    if (url.pathname === "/game/guess" && request.method === "POST") {
+      const input = (await request.json()) as { user: GameWinner; value: number };
+      const game = (await this.state.storage.get<StoredGame>("game")) ?? {
+        rounds: [],
+        guesses: [],
+        leaderboard: {},
+      };
+      const round = game.active;
+      if (!round?.active) return Response.json({ kind: "no-game" });
+      game.guesses.push({
+        user_id: input.user.user_id,
+        username: input.user.username,
+        guess_value: input.value,
+        timestamp: clock(),
+      });
+      if (input.value === round.secret_number) {
+        round.active = false;
+        round.end_time = clock();
+        round.winner = input.user;
+        game.last = round;
+        game.rounds.push(round);
+        game.active = undefined;
+        const existing = game.leaderboard[String(input.user.user_id)];
+        game.leaderboard[String(input.user.user_id)] = {
+          ...input.user,
+          win_count: (existing?.win_count ?? 0) + 1,
+          last_win_time: round.end_time,
+        };
+        await this.state.storage.put("game", game);
+        return Response.json({ kind: "won", winner: input.user });
+      }
+      await this.state.storage.put("game", game);
+      return Response.json({ kind: input.value < round.secret_number ? "higher" : "lower" });
+    }
+
+    if (url.pathname === "/game/leaderboard" && request.method === "GET") {
+      const game = await this.state.storage.get<StoredGame>("game");
+      const entries = Object.values(game?.leaderboard ?? {}).sort(
+        (a, b) => b.win_count - a.win_count || b.last_win_time - a.last_win_time,
+      );
+      return Response.json(entries.slice(0, 10));
+    }
+
+    if (url.pathname === "/game/last" && request.method === "GET") {
+      const game = await this.state.storage.get<StoredGame>("game");
+      return Response.json(game?.last ?? null);
+    }
+
+    if (url.pathname === "/game/active" && request.method === "GET") {
+      const game = await this.state.storage.get<StoredGame>("game");
+      return Response.json(Boolean(game?.active?.active));
+    }
+
+    if (url.pathname === "/game/history" && request.method === "GET") {
+      const game = await this.state.storage.get<StoredGame>("game");
+      return Response.json((game?.rounds ?? []).slice(-10).reverse());
+    }
+
     return new Response("not found", { status: 404 });
   }
 
   // Fires at the earliest reminder's wall-clock time. Sends every due reminder,
   // drops them, and re-arms for whatever remains.
   async alarm(): Promise<void> {
-    const now = Date.now();
+    const now = clock();
     const list = (await this.state.storage.get<Reminder[]>("reminders")) ?? [];
     const due = list.filter((r) => r.at <= now);
     const rest = list.filter((r) => r.at > now);

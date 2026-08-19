@@ -1,19 +1,24 @@
 [
   {
-    "name": "/scoreboard",
+    "name": "/scoreboard handles unavailable persistent storage",
     "steps": [
       {
+        "send": { "text": "/scoreboard" },
         "expect": [
-          {
-            "method": "sendMessage",
-            "payload": {
-              "text": "Display the top 10 winners leaderboard"
-            }
-          }
-        ],
-        "send": {
-          "text": "/scoreboard"
-        }
+          { "method": "sendMessage", "payload": { "text": "Таблица пока недоступна. Попробуйте ещё раз через минуту." } }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "scoreboard menu button answers its callback",
+    "steps": [
+      {
+        "send": { "callback": "game:scoreboard" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "editMessageText", "payload": { "text": "Таблица пока недоступна. Попробуйте ещё раз через минуту." } }
+        ]
       }
     ]
   }

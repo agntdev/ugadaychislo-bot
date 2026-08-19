@@ -1,19 +1,24 @@
 [
   {
-    "name": "/gameresult",
+    "name": "/gameresult handles unavailable persistent storage",
     "steps": [
       {
+        "send": { "text": "/gameresult" },
         "expect": [
-          {
-            "method": "sendMessage",
-            "payload": {
-              "text": "Repeat the last round's result"
-            }
-          }
-        ],
-        "send": {
-          "text": "/gameresult"
-        }
+          { "method": "sendMessage", "payload": { "text": "Итог пока недоступен. Попробуйте ещё раз через минуту." } }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "result menu button answers its callback",
+    "steps": [
+      {
+        "send": { "callback": "game:result" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "editMessageText", "payload": { "text": "Итог пока недоступен. Попробуйте ещё раз через минуту." } }
+        ]
       }
     ]
   }

@@ -1,19 +1,24 @@
 [
   {
-    "name": "/startgame",
+    "name": "/startgame explains that games run in groups",
     "steps": [
       {
+        "send": { "text": "/startgame" },
         "expect": [
-          {
-            "method": "sendMessage",
-            "payload": {
-              "text": "Start a new game round or force restart if used with 'force' parameter"
-            }
-          }
-        ],
-        "send": {
-          "text": "/startgame"
-        }
+          { "method": "sendMessage", "payload": { "text": "Играть лучше в группе — добавьте меня туда, и админ сможет открыть раунд." } }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "start-game menu button explains group setup in a private chat",
+    "steps": [
+      {
+        "send": { "callback": "game:start" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "editMessageText", "payload": { "text": "Играть лучше в группе — добавьте меня туда, и админ сможет открыть раунд." } }
+        ]
       }
     ]
   }
