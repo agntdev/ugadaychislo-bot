@@ -12,6 +12,13 @@ const composer = new Composer<Ctx>();
 const WELCOME = "🎲 Угадайте число в своей группе. Выберите, что хотите сделать.";
 
 composer.command("start", async (ctx) => {
+  const payload = ctx.match.trim();
+  const linkedGroup = /^game_(-?\d+)$/.exec(payload);
+  if (linkedGroup && ctx.chat?.type === "private") {
+    ctx.session.secretGroupId = Number(linkedGroup[1]);
+    await ctx.reply("Please send the secret number for the current game.");
+    return;
+  }
   await ctx.reply(WELCOME, { reply_markup: mainMenuKeyboard() });
 });
 

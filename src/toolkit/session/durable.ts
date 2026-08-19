@@ -57,9 +57,11 @@ interface GameWinner {
 }
 
 interface StoredRound {
-  secret_number: number;
+  secret_number?: number;
   started_by: number;
   active: boolean;
+  waiting_for_secret?: boolean;
+  message_thread_id?: number;
   start_time: number;
   end_time?: number;
   winner?: GameWinner;
@@ -83,17 +85,6 @@ let clock: () => number = () => Date.now();
 /** Test seam for clock-driven durable-object behavior. */
 export function setClockForTests(value: (() => number) | undefined): void {
   clock = value ?? (() => Date.now());
-}
-
-function randomSecret(): number {
-  const limit = Math.floor(0x1_0000_0000 / 100) * 100;
-  let value = 0;
-  do {
-    const bytes = new Uint32Array(1);
-    crypto.getRandomValues(bytes);
-    value = bytes[0];
-  } while (value >= limit);
-  return (value % 100) + 1;
 }
 
 /**
@@ -200,7 +191,7 @@ export class ChatDO {
     }
 
     if (url.pathname === "/game/start" && request.method === "POST") {
-      const input = (await request.json()) as { startedBy: number; force: boolean };
+      const input = (await request.json()) as { startedBy: number; force: boolean; threadId?: number };
       const game = (await this.state.storage.get<StoredGame>("game")) ?? {
         rounds: [],
         guesses: [],
@@ -215,14 +206,47 @@ export class ChatDO {
         game.rounds.push(game.active);
       }
       const round: StoredRound = {
-        secret_number: randomSecret(),
         started_by: input.startedBy,
         active: true,
+        waiting_for_secret: true,
+        ...(input.threadId === undefined ? {} : { message_thread_id: input.threadId }),
         start_time: clock(),
       };
       game.active = round;
       await this.state.storage.put("game", game);
-      return Response.json({ kind: "started", round, restarted: input.force });
+      return Response.json({ kind: "waiting-for-secret", round, restarted: input.force });
+    }
+
+    if (url.pathname === "/game/pending" && request.method === "POST") {
+      const input = (await request.json()) as { groupId: number };
+      const pending = (await this.state.storage.get<number[]>("pending-games")) ?? [];
+      if (!pending.includes(input.groupId)) pending.push(input.groupId);
+      await this.state.storage.put("pending-games", pending);
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/game/pending" && request.method === "GET") {
+      return Response.json((await this.state.storage.get<number[]>("pending-games")) ?? []);
+    }
+
+    if (url.pathname === "/game/pending/remove" && request.method === "POST") {
+      const input = (await request.json()) as { groupId: number };
+      const pending = (await this.state.storage.get<number[]>("pending-games")) ?? [];
+      await this.state.storage.put("pending-games", pending.filter((id) => id !== input.groupId));
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/game/secret" && request.method === "POST") {
+      const input = (await request.json()) as { adminId: number; secretNumber: number };
+      const game = await this.state.storage.get<StoredGame>("game");
+      const round = game?.active;
+      if (!game || !round?.active || !round.waiting_for_secret) {
+        return Response.json({ kind: "not-waiting" });
+      }
+      round.secret_number = input.secretNumber;
+      round.waiting_for_secret = false;
+      await this.state.storage.put("game", game);
+      return Response.json({ kind: "started", round });
     }
 
     if (url.pathname === "/game/guess" && request.method === "POST") {
@@ -234,6 +258,9 @@ export class ChatDO {
       };
       const round = game.active;
       if (!round?.active) return Response.json({ kind: "no-game" });
+      if (round.waiting_for_secret || round.secret_number === undefined) {
+        return Response.json({ kind: "waiting-for-secret" });
+      }
       game.guesses.push({
         user_id: input.user.user_id,
         username: input.user.username,

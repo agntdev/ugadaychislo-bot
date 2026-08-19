@@ -10,7 +10,7 @@ const composer = new Composer<Ctx>();
 
 const HELP =
   "🎲 Добавьте меня в группу, и админ начнёт раунд.\n" +
-  "Присылайте целые числа от 1 до 100 — подсказка будет в чате.\n\n" +
+  "Админ присылает секретное число в личном чате с ботом, а вы угадываете в группе.\n\n" +
   "Кнопки открывают игру, таблицу и итог. Команды: /start, /help, /startgame, /scoreboard, /gameresult.";
 
 const backToMenu = inlineKeyboard([[inlineButton("⬅️ Back to menu", "menu:main")]]);

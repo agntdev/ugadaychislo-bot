@@ -9,5 +9,16 @@
         ]
       }
     ]
+  },
+  {
+    "name": "game setup deep link asks for the secret in private chat",
+    "steps": [
+      {
+        "send": { "text": "/start game_-100" },
+        "expect": [
+          { "method": "sendMessage", "payload": { "text": "Please send the secret number for the current game." } }
+        ]
+      }
+    ]
   }
 ]

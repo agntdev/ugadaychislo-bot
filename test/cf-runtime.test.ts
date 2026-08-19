@@ -3,6 +3,7 @@ import { Composer } from "grammy";
 import { buildBot, type Ctx } from "../src/bot.js";
 import { runSpecs, parseBotSpec } from "../src/toolkit/index.js";
 import { ChatDO, type DOState, type WorkerEnv } from "../src/toolkit/session/durable.js";
+import startGame from "../src/handlers/startgame.js";
 
 // The Workers entry (src/worker.ts) builds the bot from a BUILD-TIME handler
 // manifest instead of scanning the filesystem. Prove the option is honored:
@@ -80,6 +81,91 @@ function fakeState(): DOState {
     blockConcurrencyWhile() {},
   };
 }
+
+function gameNamespace(): WorkerEnv["CHAT_DO"] {
+  const instances = new Map<string, ChatDO>();
+  return {
+    idFromName(name: string): string {
+      return name;
+    },
+    get(id: unknown) {
+      const key = String(id);
+      let instance = instances.get(key);
+      if (!instance) {
+        instance = new ChatDO(fakeState(), { BOT_TOKEN: "T" } as WorkerEnv);
+        instances.set(key, instance);
+      }
+      return { fetch: (input: string, init?: { method?: string; body?: string }) => instance!.fetch(new Request(input, init)) };
+    },
+  };
+}
+
+function groupTextUpdate(id: number, text: string, chatId: number, userId: number) {
+  return {
+    update_id: id,
+    message: {
+      message_id: id,
+      date: 0,
+      chat: { id: chatId, type: "group", title: "Game" },
+      from: { id: userId, is_bot: false, first_name: "Admin" },
+      text,
+      entities: text.startsWith("/") ? [{ type: "bot_command", offset: 0, length: text.split(" ")[0].length }] : undefined,
+    },
+  };
+}
+
+function privateTextUpdate(id: number, text: string, userId: number) {
+  return {
+    update_id: id,
+    message: {
+      message_id: id,
+      date: 0,
+      chat: { id: userId, type: "private", first_name: "Admin" },
+      from: { id: userId, is_bot: false, first_name: "Admin" },
+      text,
+    },
+  };
+}
+
+describe("admin-supplied game secrets", () => {
+  it("prompts an admin privately, retries invalid input, and starts the group round without revealing the number", async () => {
+    const env = { BOT_TOKEN: "T", CHAT_DO: gameNamespace() } as WorkerEnv;
+    const attachEnv = new Composer<Ctx>();
+    attachEnv.use((ctx, next) => {
+      (ctx as Ctx & { env: WorkerEnv }).env = env;
+      return next();
+    });
+    const bot = await buildBot("test-token", { handlers: [attachEnv, startGame] });
+    bot.botInfo = {
+      id: 42, is_bot: true, first_name: "TestBot", username: "test_bot",
+      can_join_groups: true, can_read_all_group_messages: false,
+      supports_inline_queries: false, can_connect_to_business: false,
+    };
+    const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
+    bot.api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      const result = method === "getChatMember"
+        ? { status: "administrator" }
+        : { message_id: calls.length, date: 0, chat: { id: 1, type: "private" } };
+      return { ok: true, result } as never;
+    });
+
+    await bot.handleUpdate(groupTextUpdate(1, "/startgame", -100, 7) as never);
+    expect(calls.some((call) => call.method === "sendMessage" && call.payload.text === "Please send the secret number for the current game.")).toBe(true);
+    expect(calls.some((call) => call.method === "sendMessage" && String(call.payload.text).includes("секретное число"))).toBe(true);
+    expect(calls.some((call) => call.method === "sendMessage" && String(JSON.stringify(call.payload.reply_markup)).includes("https://t.me/test_bot?start=game_-100"))).toBe(true);
+
+    calls.length = 0;
+    await bot.handleUpdate(privateTextUpdate(2, "oops", 7) as never);
+    expect(calls.some((call) => call.payload.text === "Пришлите целое число от 1 до 1000000.")).toBe(true);
+
+    calls.length = 0;
+    await bot.handleUpdate(privateTextUpdate(3, "321", 7) as never);
+    expect(calls.some((call) => call.payload.text === "Секретное число сохранено. Раунд уже начался в группе!")).toBe(true);
+    expect(calls.some((call) => call.method === "sendMessage" && call.payload.chat_id === -100 && String(call.payload.text).includes("Раунд начался"))).toBe(true);
+    expect(calls.every((call) => !String(call.payload.text).includes("321"))).toBe(true);
+  });
+});
 
 describe("ChatDO — Durable Object reminders + session", () => {
   let sent: Array<{ method: string; body: { chat_id: number | string; text: string } }>;
