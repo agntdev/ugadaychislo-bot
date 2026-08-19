@@ -1,14 +1,11 @@
 [
   {
-    "name": "/start replies with the welcome + main menu",
+    "name": "/start opens the Russian game menu",
     "steps": [
       {
         "send": { "text": "/start" },
         "expect": [
-          {
-            "method": "sendMessage",
-            "payload": { "text": "👋 Welcome! Tap a button below to get started." }
-          }
+          { "method": "sendMessage", "payload": { "text": "🎲 Угадайте число в своей группе. Выберите, что хотите сделать." } }
         ]
       }
     ]
